@@ -34,6 +34,7 @@
     "test": "npm run lint && vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
+    "tsc:watch": "tsc --watch --noEmit",
     "preversion": "npm run test && npm run build",
     "postversion": "npm run build && git push && git push --tags"
   },
