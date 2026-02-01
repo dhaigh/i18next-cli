@@ -8,6 +8,16 @@ import { ConsoleLogger } from './utils/logger'
 import { createSpinnerLike } from './utils/wrap-ora'
 import type { I18nextToolkitConfig, Logger } from './types'
 
+/**
+ * Represents a found hardcoded string or interpolation parameter error with its location information.
+ */
+interface Issue {
+  /** The hardcoded text content or error message */
+  text: string;
+  /** Line number where the string or error was found */
+  line: number;
+}
+
 // Helper to extract interpolation keys from a translation string
 function extractInterpolationKeys (str: string, config: I18nextToolkitConfig): string[] {
   const prefix = config.extract.interpolationPrefix ?? '{{'
@@ -26,8 +36,8 @@ function extractInterpolationKeys (str: string, config: I18nextToolkitConfig): s
 }
 
 // Helper to lint interpolation parameter errors in t() calls
-function lintInterpolationParams (ast: any, code: string, config: I18nextToolkitConfig): HardcodedString[] {
-  const issues: HardcodedString[] = []
+function findInterpolationIssues (ast: any, code: string, config: I18nextToolkitConfig): Issue[] {
+  const issues: Issue[] = []
   // Only run if enabled (default true)
   const enabled = config.lint?.checkInterpolationParams !== false
   if (!enabled) return issues
@@ -57,7 +67,7 @@ function lintInterpolationParams (ast: any, code: string, config: I18nextToolkit
   }
 
   // Modularized CallExpression handler
-  function handleCallExpression (node: any, ancestors: any[]) {
+  function handleCallExpression (node: any, _ancestors: any[]) {
     let calleeName = ''
     if (node.callee) {
       if (node.callee.type === 'Identifier' && node.callee.value) {
@@ -121,11 +131,121 @@ function lintInterpolationParams (ast: any, code: string, config: I18nextToolkit
       }
     }
   }
+
   // Helper for line number
   const getLineNumber = (pos: number): number => {
     return code.substring(0, pos).split('\n').length
   }
+
   walk(ast, [])
+
+  return issues
+}
+
+function findMismatchingDefaults (ast: any, code: string, config: I18nextToolkitConfig): Issue[] {
+  const issues: Issue[] = []
+  // Only run if enabled (default true)
+  const enabled = config.lint?.checkMismatchingDefaults !== false
+  if (!enabled) return issues
+
+  const getLineNumber = (pos: number): number => {
+    return code.substring(0, pos - ast.span.start).split('\n').length
+  }
+
+  const defaults: Record<any, any> = {}
+
+  // Traverse AST for CallExpressions matching t() or i18n.t()
+  function walk (node: any, ancestors: any[]) {
+    if (!node || typeof node !== 'object') return
+    const currentAncestors = [...ancestors, node]
+
+    // Handle CallExpression nodes
+    if (node.type === 'CallExpression') {
+      handleCallExpression(node, currentAncestors)
+    }
+
+    // Recurse into all child nodes (arrays and objects), skip 'span'
+    for (const key of Object.keys(node)) {
+      if (key === 'span') continue
+      const child = node[key]
+      if (Array.isArray(child)) {
+        for (const item of child) {
+          if (item && typeof item === 'object') walk(item, currentAncestors)
+        }
+      } else if (child && typeof child === 'object') {
+        walk(child, currentAncestors)
+      }
+    }
+  }
+
+  // Modularized CallExpression handler
+  function handleCallExpression (node: any, _ancestors: any[]) {
+    let calleeName = ''
+    if (node.callee) {
+      if (node.callee.type === 'Identifier' && node.callee.value) {
+        calleeName = node.callee.value
+      } else if (node.callee.type === 'Identifier' && node.callee.name) {
+        calleeName = node.callee.name
+      } else if (node.callee.type === 'MemberExpression' && node.callee.property?.type === 'Identifier') {
+        calleeName = node.callee.property.value || node.callee.property.name
+      }
+    }
+
+    const fnPatterns = config.extract.functions || ['t', '*.t']
+    let matches = false
+    for (const pattern of fnPatterns) {
+      if (pattern.startsWith('*.')) {
+        if (calleeName === pattern.slice(2)) matches = true
+      } else {
+        if (calleeName === pattern) matches = true
+      }
+    }
+
+    if (matches) {
+      const arg0raw = node.arguments?.[0]
+      const arg1raw = node.arguments?.[1]
+      const arg0 = arg0raw?.expression ?? arg0raw
+      const arg1 = arg1raw?.expression ?? arg1raw
+
+      if (arg0?.type === 'StringLiteral') {
+        const key = arg0.value
+
+        if (arg1?.type === 'StringLiteral') {
+          const value = arg1.value
+          const seen = defaults[key]
+
+          const mismatch = {
+            value,
+            line: getLineNumber(node.span?.start ?? 0),
+          }
+
+          if (seen) {
+            seen.push(mismatch)
+          } else {
+            defaults[key] = [mismatch]
+          }
+        }
+      }
+    }
+  }
+
+  walk(ast, [])
+
+  for (const [key, mismatches] of Object.entries(defaults)) {
+    const values = mismatches.map((m: any) => m.value)
+    const uniqueValues = Array.from(new Set(values))
+
+    if (uniqueValues.length > 1) {
+      const values = uniqueValues.map(v => `"${v}"`).join(', ')
+      mismatches.forEach((m: any) => {
+        issues.push({
+          text: `Mismatching default values for key "${key}": ${values}`,
+          line: m.line,
+        })
+      })
+    }
+  }
+
   return issues
 }
 
@@ -136,7 +256,7 @@ type LinterEventMap = {
   done: [{
     success: boolean;
     message: string;
-    files: Record<string, HardcodedString[]>;
+    files: Record<string, Issue[]>;
   }];
   error: [error: Error];
 }
@@ -187,7 +307,7 @@ export class Linter extends EventEmitter<LinterEventMap> {
       })
       this.emit('progress', { message: `Analyzing ${sourceFiles.length} source files...` })
       let totalIssues = 0
-      const issuesByFile = new Map<string, HardcodedString[]>()
+      const issuesByFile = new Map<string, Issue[]>()
 
       for (const file of sourceFiles) {
         const code = await readFile(file, 'utf-8')
@@ -242,11 +362,12 @@ export class Linter extends EventEmitter<LinterEventMap> {
           }
         }
 
-        // Collect hardcoded string issues
-        const hardcodedStrings = findHardcodedStrings(ast, code, config)
-        // Collect interpolation parameter issues
-        const interpolationIssues = lintInterpolationParams(ast, code, config)
-        const allIssues = [...hardcodedStrings, ...interpolationIssues]
+        const allIssues = [
+          ...findHardcodedStrings(ast, code, config),
+          ...findInterpolationIssues(ast, code, config),
+          ...findMismatchingDefaults(ast, code, config),
+        ]
+
         if (allIssues.length > 0) {
           totalIssues += allIssues.length
           issuesByFile.set(file, allIssues)
@@ -335,16 +456,6 @@ export async function runLinterCli (
   }
 }
 
-/**
- * Represents a found hardcoded string or interpolation parameter error with its location information.
- */
-interface HardcodedString {
-  /** The hardcoded text content or error message */
-  text: string;
-  /** Line number where the string or error was found */
-  line: number;
-}
-
 const isUrlOrPath = (text: string) => /^(https|http|\/\/|^\/)/.test(text)
 
 /**
@@ -379,8 +490,8 @@ const isUrlOrPath = (text: string) => /^(https|http|\/\/|^\/)/.test(text)
  * // Outputs issues found or success message
  * ```
  */
-function findHardcodedStrings (ast: any, code: string, config: I18nextToolkitConfig): HardcodedString[] {
-  const issues: HardcodedString[] = []
+function findHardcodedStrings (ast: any, code: string, config: I18nextToolkitConfig): Issue[] {
+  const issues: Issue[] = []
   // A list of AST nodes that have been identified as potential issues.
   const nodesToLint: any[] = []
 

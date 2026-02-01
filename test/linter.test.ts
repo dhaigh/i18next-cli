@@ -33,6 +33,93 @@ describe('Linter (core logic)', () => {
     vi.restoreAllMocks()
   })
 
+  it.only('should report correct line numbers for issues', async () => {
+    // Define the code as an array of strings and join with newlines.
+    // This creates a "clean" string without ambiguous leading/trailing whitespace
+    // from a template literal, ensuring the parser's byte offsets are accurate.
+    const sampleCode = [
+      'const a = 5;',
+      '// Line 1',
+      'function MyComponent() {', // Line 2
+      '  return (', // Line 3
+      '    <div>A string on line 4</div>', // Line 4
+      '  );', // Line 5
+      '}', // Line 6
+      'const el = <p title="An attribute on line 7"></p>;', // Line 7
+    ].join('\n')
+
+    vol.fromJSON({ '/src/App.tsx': sampleCode })
+
+    const result = await runLinter(mockConfig)
+
+    expect(result.success).toBe(false)
+    expect(result.message).toContain('Linter found 2 potential issues')
+    expect(result.files['/src/App.tsx']).toHaveLength(2)
+
+    const issues = result.files['/src/App.tsx']
+    expect(issues[0].line).toBe(4)
+    expect(issues[0].text).toBe('A string on line 4')
+    expect(issues[1].line).toBe(7)
+    expect(issues[1].text).toBe('An attribute on line 7')
+  })
+
+  it('should detect mismatching default values in t() calls', async () => {
+    const sampleCode = [
+      `const msg1 = t('myKey', 'default1');`,
+      `const msg2 = t('myKey', 'default2');`,
+    ].join('\n');
+
+    vol.fromJSON({ '/src/App.tsx': sampleCode })
+
+    const result = await runLinter(mockConfig)
+
+    expect(result.success).toBe(false)
+    expect(result.message).toContain('Linter found 2 potential issues')
+    expect(result.files['/src/App.tsx']).toHaveLength(2)
+    expect(result.files['/src/App.tsx'][0].text).toBe('Mismatching default values for key "myKey": "default1", "default2"')
+    expect(result.files['/src/App.tsx'][0].line).toBe(1)
+    expect(result.files['/src/App.tsx'][1].text).toBe('Mismatching default values for key "myKey": "default1", "default2"')
+    expect(result.files['/src/App.tsx'][1].line).toBe(2)
+  })
+
+  it('should detect mismatching default values in t() calls 2', async () => {
+    const sampleCode = [
+      `const msg1 = t('myKey', 'default1');`,
+      `const msg2 = t('myKey', 'default2');`,
+    ].join('\n');
+
+    vol.fromJSON({ '/src/App.tsx': sampleCode })
+
+    const result = await runLinter(mockConfig)
+
+    expect(result.success).toBe(false)
+    expect(result.message).toContain('Linter found 2 potential issues')
+    expect(result.files['/src/App.tsx']).toHaveLength(2)
+    expect(result.files['/src/App.tsx'][0].text).toBe('Mismatching default values for key "myKey": "default1", "default2"')
+    expect(result.files['/src/App.tsx'][0].line).toBe(1)
+    expect(result.files['/src/App.tsx'][1].text).toBe('Mismatching default values for key "myKey": "default1", "default2"')
+    expect(result.files['/src/App.tsx'][1].line).toBe(2)
+  })
+
+  it('should detect mismatching default values in t() calls 3', async () => {
+    const sampleCode = [
+      `const msg1 = t('myKey', 'default1');`,
+      `const msg2 = t('myKey', 'default2');`,
+    ].join('\n');
+
+    vol.fromJSON({ '/src/App.tsx': sampleCode })
+
+    const result = await runLinter(mockConfig)
+
+    expect(result.success).toBe(false)
+    expect(result.message).toContain('Linter found 2 potential issues')
+    expect(result.files['/src/App.tsx']).toHaveLength(2)
+    expect(result.files['/src/App.tsx'][0].text).toBe('Mismatching default values for key "myKey": "default1", "default2"')
+    expect(result.files['/src/App.tsx'][0].line).toBe(1)
+    expect(result.files['/src/App.tsx'][1].text).toBe('Mismatching default values for key "myKey": "default1", "default2"')
+    expect(result.files['/src/App.tsx'][1].line).toBe(2)
+  })
+
   it('should find no issues in a clean file', async () => {
     const sampleCode = `
       import { Trans } from 'react-i18next';
@@ -57,8 +144,7 @@ describe('Linter (core logic)', () => {
     vol.fromJSON({ '/src/App.tsx': sampleCode })
 
     const result = await runLinter(mockConfig)
-    console.log(JSON.stringify(result, null, 2))
-    // Should not report any issues
+
     expect(result.success).toBe(true)
     expect(result.message).toContain('No issues found.')
     expect(Object.keys(result.files)).toHaveLength(0)
@@ -180,35 +266,6 @@ describe('Linter (core logic)', () => {
     expect(texts.some(text => text.includes('This text is'))).toBe(false)
   })
 
-  it('should report correct line numbers for issues', async () => {
-    // Define the code as an array of strings and join with newlines.
-    // This creates a "clean" string without ambiguous leading/trailing whitespace
-    // from a template literal, ensuring the parser's byte offsets are accurate.
-    const sampleCode = [
-      '// Line 1',
-      'function MyComponent() {', // Line 2
-      '  return (', // Line 3
-      '    <div>A string on line 4</div>', // Line 4
-      '  );', // Line 5
-      '}', // Line 6
-      'const el = <p title="An attribute on line 7"></p>;', // Line 7
-    ].join('\n')
-
-    vol.fromJSON({ '/src/App.tsx': sampleCode })
-
-    const result = await runLinter(mockConfig)
-
-    expect(result.success).toBe(false)
-    expect(result.message).toContain('Linter found 2 potential issues')
-    expect(result.files['/src/App.tsx']).toHaveLength(2)
-
-    const issues = result.files['/src/App.tsx']
-    expect(issues[0].line).toBe(4)
-    expect(issues[0].text).toBe('A string on line 4')
-    expect(issues[1].line).toBe(7)
-    expect(issues[1].text).toBe('An attribute on line 7')
-  })
-
   it('should respect custom ignoredTags from config', async () => {
     const customConfig: I18nextToolkitConfig = {
       ...mockConfig,
@@ -234,6 +291,7 @@ describe('Linter (core logic)', () => {
     expect(result.message).toContain('Linter found 1 potential issues')
     expect(result.files['/src/App.tsx']).toHaveLength(1)
     expect(result.files['/src/App.tsx'][0].text).toBe('This should be flagged.')
+    expect(result.files['/src/App.tsx'][0].line).toBe(3)
     // Should NOT include blockquote text
     expect(result.files['/src/App.tsx'].some(issue => issue.text.includes('This text should be ignored'))).toBe(false)
   })
@@ -305,6 +363,7 @@ describe('Linter (core logic)', () => {
     expect(result.message).toContain('Linter found 1 potential issues')
     expect(result.files['/src/App.tsx']).toHaveLength(1)
     expect(result.files['/src/App.tsx'][0].text).toBe('A valid hardcoded string')
+    expect(result.files['/src/App.tsx'][0].line).toBe(1)
     // The ignored file should not be in the results
     expect(result.files['/src/legacy/ignored.tsx']).toBeUndefined()
   })
@@ -513,6 +572,7 @@ describe('Linter (core logic)', () => {
     expect(result.success).toBe(false)
     expect(result.files['/src/tsx-in-ts.ts']).toBeDefined()
     expect(result.files['/src/tsx-in-ts.ts'][0].text).toBe('Should not crash')
+    expect(result.files['/src/tsx-in-ts.ts'][0].line).toBe(10)
   })
 
   it('should handle identical JSX fine when file extension is .tsx', async () => {
@@ -601,6 +661,7 @@ describe('Linter (core logic)', () => {
     expect(result.message).toContain('Linter found 1 potential issues')
     expect(result.files['/src/App.tsx']).toHaveLength(1)
     expect(result.files['/src/App.tsx'][0].text).toBe('This should be flagged.')
+    expect(result.files['/src/App.tsx'][0].line).toBe(3)
     // Ensure span text was not reported
     expect(result.files['/src/App.tsx'].some(issue => issue.text.includes('NOT be flagged'))).toBe(false)
   })
@@ -677,6 +738,7 @@ describe('Linter (core logic)', () => {
     expect(result.success).toBe(false)
     expect(result.files['/src/App.tsx']).toHaveLength(1)
     expect(result.files['/src/App.tsx'][0].text).toBe('Should be flagged')
+    expect(result.files['/src/App.tsx'][0].line).toBe(3)
   })
 
   it('acceptedTags + acceptedAttributes: only lint attributes on accepted tags and only the accepted attributes', async () => {
@@ -691,8 +753,8 @@ describe('Linter (core logic)', () => {
 
     const sampleCode = `
       <div>
-        <p title="Flagged title">Text</p>
-        <span title="Also flagged title">Span</span>
+        <p title="Flagged title">Flagged text</p>
+        <span title="Not flagged title">Span</span>
       </div>
     `
     vol.fromJSON({ '/src/App.tsx': sampleCode })
@@ -703,7 +765,9 @@ describe('Linter (core logic)', () => {
     // Only the p@title and the p text should be reported; span title is outside acceptedTags
     expect(result.files['/src/App.tsx']).toHaveLength(2)
     expect(result.files['/src/App.tsx'][0].text).toBe('Flagged title')
-    expect(result.files['/src/App.tsx'][1].text).toBe('Text')
+    expect(result.files['/src/App.tsx'][0].line).toBe(3)
+    expect(result.files['/src/App.tsx'][1].text).toBe('Flagged text')
+    expect(result.files['/src/App.tsx'][1].line).toBe(3)
   })
 
   it('ignoredTags should override acceptedAttributes (being inside an ignored tag prevents reporting even for accepted attrs)', async () => {

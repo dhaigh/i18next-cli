@@ -228,6 +228,9 @@ export interface I18nextToolkitConfig {
 
     /** Enable linting for interpolation parameter errors in translation calls (default: true) */
     checkInterpolationParams?: boolean;
+
+    /** Enable linting for mismatching default values across different occurrences of the same key (default: true) */
+    checkMismatchingDefaults?: boolean;
   };
 
   /** Configuration options for TypeScript type generation */
